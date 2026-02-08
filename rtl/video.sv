@@ -141,8 +141,9 @@ reg [2:0] linebuf0_emph[0:255];
 reg [2:0] linebuf1_emph[0:255];
 reg       write_buf = 0;
 reg       read_buf = 0;
-reg       line_ready = 0;
 reg       completed_buf = 0;
+reg       line_toggle = 0;
+reg       line_seen = 0;
 reg [8:0] count_h_d = 0;
 reg [8:0] count_v_d = 0;
 wire      new_pixel = (count_h != count_h_d) || (count_v != count_v_d);
@@ -244,13 +245,13 @@ always @(posedge clk) begin
 			end
 		end
 
-		if (count_h == 0) begin
-			completed_buf <= write_buf;
-			write_buf <= ~write_buf;
-			line_ready <= 1'b1;
+			if (count_h == 0) begin
+				completed_buf <= write_buf;
+				write_buf <= ~write_buf;
+				line_toggle <= ~line_toggle;
+			end
 		end
 	end
-end
 
 
 always @(posedge clk) begin
@@ -258,9 +259,9 @@ always @(posedge clk) begin
 
 	if (pix_ce) begin
 		if (!speed_full) begin
-			if (h == 0 && line_ready) begin
+			if (h == 0 && (line_seen != line_toggle)) begin
 				read_buf <= completed_buf;
-				line_ready <= 1'b0;
+				line_seen <= line_toggle;
 			end
 
 			if (h < 256) begin
