@@ -74,6 +74,7 @@ endmodule
 module NES(
 	input         clk,
 	input         speed_ce,
+	input         speed_resync,
 	input         reset_nes,
 	input         ppu_rst_behavior,
 	input         cold_reset,
@@ -226,12 +227,17 @@ reg [2:0] div_ppu = 3'd1;
 reg [1:0] div_sys = 2'd0;
 
 // CE's
-wire cpu_ce  = (div_cpu == div_cpu_n);
-wire ppu_ce  = (div_ppu == div_ppu_n);
-wire cart_ce = (div_cpu == div_cpu_n - 5'd2); // First PPU cycle where cpu data is visible.
+wire cpu_ce_raw  = (div_cpu == div_cpu_n);
+wire ppu_ce_raw  = (div_ppu == div_ppu_n);
+wire cart_ce_raw = (div_cpu == div_cpu_n - 5'd2); // First PPU cycle where cpu data is visible.
+
+wire cpu_ce  = speed_ce && cpu_ce_raw;
+wire ppu_ce  = speed_ce && ppu_ce_raw;
+wire cart_ce = speed_ce && cart_ce_raw;
 
 // Signals
-wire cart_pre  = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= div_cpu_n - 5'd2);
+wire cart_pre_raw  = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= div_cpu_n - 5'd2);
+wire cart_pre = speed_ce && cart_pre_raw;
 wire ppu_read  = (ppu_tick == 1);
 wire ppu_write = (ppu_tick == 1);
 
@@ -267,7 +273,8 @@ reg skip_pause_ce          = 0;
 reg  [7:0] corepause_delay = 8'd0;
 reg  [2:0] div_ppu_pause = 0;
 wire skip_pixel_pause;
-wire ppu_ce_pause = corepause_active ? (div_ppu_pause == div_ppu_n) : ppu_ce;
+wire ppu_ce_pause_raw = corepause_active ? (div_ppu_pause == div_ppu_n) : ppu_ce_raw;
+wire ppu_ce_pause = speed_ce && ppu_ce_pause_raw;
 wire render_ena;
 wire [8:0] cycle_paused;
 wire [8:0] scanline_paused;
@@ -280,7 +287,20 @@ assign refresh    = corepause_active_delay && ppu_ce_pause;
 
 always @(posedge clk) begin
 	if (reset_nes) hold_reset <= 1;
-	if (speed_ce) begin
+	if (speed_resync) begin
+		div_cpu <= 5'd1;
+		div_ppu <= 3'd1;
+		div_sys <= 0;
+		cpu_tick_count <= 0;
+		ppu_tick <= 0;
+		div_ppu_pause <= 0;
+		corepause_active <= 0;
+		corepause_active_delay <= 0;
+		corepause_delay <= 8'd0;
+		skip_pause_ce <= 0;
+		freeze_clocks <= 0;
+		faux_pixel_cnt <= 0;
+	end else if (speed_ce) begin
 		if (cpu_ce) hold_reset <= 0;
 		if (~freeze_clocks | ~(div_ppu == (div_ppu_n - 1'b1))) begin
 			if (~skip_ppu_cycle)

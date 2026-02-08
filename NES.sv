@@ -873,9 +873,12 @@ end
 reg  [7:0] speed_accum = 0;
 reg        speed_ce = 1'b1;
 wire [8:0] speed_accum_next = speed_accum + speed_pct;
+reg  [2:0] speed_sel_d = 0;
+wire       speed_resync = (speed_sel_d != speed_sel);
 
 always @(posedge clk) begin
-	if (reset_nes) begin
+	speed_sel_d <= speed_sel;
+	if (reset_nes || speed_resync) begin
 		speed_accum <= 0;
 		speed_ce <= 1'b1;
 	end else if (speed_accum_next >= 9'd100) begin
@@ -890,6 +893,7 @@ end
 NES nes (
 	.clk             (clk),
 	.speed_ce        (speed_ce),
+	.speed_resync    (speed_resync),
 	.reset_nes       (reset_nes),
 	.ppu_rst_behavior(status[64]),
 	.cold_reset      (downloading & (type_fds | type_nes)),
