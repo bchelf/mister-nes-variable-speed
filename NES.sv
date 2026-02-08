@@ -267,6 +267,7 @@ parameter CONF_STR = {
 	"P3-;",
 	"P3OG,Disk Swap,Auto,FDS button;",
 	"P3O[17],Disk Speed,Fast,Original;",
+	"P3O[58:56],Speed,100%,90%,80%,70%,60%,50%;",
 	"P3o9,Pause when OSD is open,Off,On;",
 	"P4,Advanced;",
 	"P4-;",
@@ -316,6 +317,7 @@ wire fds_auto_eject = ~status[16];
 wire fds_fast = ~status[17];
 wire ext_audio = ~status[30];
 wire int_audio = ~status[31];
+wire [2:0] speed_sel = status[58:56];
 
 // Figure out file types
 reg type_bios, type_fds, type_gg, type_nsf, type_nes, type_palette, is_bios, downloading;
@@ -854,8 +856,40 @@ end
 
 wire nes_hblank, nes_hsync, nes_vsync, nes_vblank;
 
+// Speed control (percent of original rate)
+reg  [6:0] speed_pct;
+always @* begin
+	case (speed_sel)
+		3'd0: speed_pct = 7'd100;
+		3'd1: speed_pct = 7'd90;
+		3'd2: speed_pct = 7'd80;
+		3'd3: speed_pct = 7'd70;
+		3'd4: speed_pct = 7'd60;
+		3'd5: speed_pct = 7'd50;
+		default: speed_pct = 7'd100;
+	endcase
+end
+
+reg  [7:0] speed_accum = 0;
+reg        speed_ce = 1'b1;
+wire [8:0] speed_accum_next = speed_accum + speed_pct;
+
+always @(posedge clk) begin
+	if (reset_nes) begin
+		speed_accum <= 0;
+		speed_ce <= 1'b1;
+	end else if (speed_accum_next >= 9'd100) begin
+		speed_accum <= speed_accum_next - 9'd100;
+		speed_ce <= 1'b1;
+	end else begin
+		speed_accum <= speed_accum_next[7:0];
+		speed_ce <= 1'b0;
+	end
+end
+
 NES nes (
 	.clk             (clk),
+	.speed_ce        (speed_ce),
 	.reset_nes       (reset_nes),
 	.ppu_rst_behavior(status[64]),
 	.cold_reset      (downloading & (type_fds | type_nes)),

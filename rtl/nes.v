@@ -73,6 +73,7 @@ endmodule
 
 module NES(
 	input         clk,
+	input         speed_ce,
 	input         reset_nes,
 	input         ppu_rst_behavior,
 	input         cold_reset,
@@ -279,93 +280,95 @@ assign refresh    = corepause_active_delay && ppu_ce_pause;
 
 always @(posedge clk) begin
 	if (reset_nes) hold_reset <= 1;
-	if (cpu_ce) hold_reset <= 0;
-	if (~freeze_clocks | ~(div_ppu == (div_ppu_n - 1'b1))) begin
-		if (~skip_ppu_cycle)
-			div_cpu <= cpu_ce || (ppu_ce && div_cpu > div_cpu_n) ? 5'd1 : div_cpu + 5'd1;
+	if (speed_ce) begin
+		if (cpu_ce) hold_reset <= 0;
+		if (~freeze_clocks | ~(div_ppu == (div_ppu_n - 1'b1))) begin
+			if (~skip_ppu_cycle)
+				div_cpu <= cpu_ce || (ppu_ce && div_cpu > div_cpu_n) ? 5'd1 : div_cpu + 5'd1;
 
-		div_ppu <= ppu_ce ? 3'd1 : div_ppu + 3'd1;
+			div_ppu <= ppu_ce ? 3'd1 : div_ppu + 3'd1;
 
-		// reset the ticker on the first ppu tick at or after a cpu tick.
-		if (cpu_ce)
-			ppu_tick <= 0;
-		else if (ppu_ce)
-			ppu_tick <= ppu_tick + 1'b1;
-	end
-
-	// Add one extra PPU tick every 5 cpu cycles for PAL.
-	if (cpu_ce && (sys_type == 2'b01))
-		cpu_tick_count <= cpu_tick_count[2] ? 3'd0 : cpu_tick_count + 1'b1;
-
-	// SDRAM Clock
-	div_sys <= div_sys + 1'b1;
-
-	// De-Jitter shenanigans
-	if (faux_pixel_cnt == 3)
-		freeze_clocks <= 1'b0;
-
-	if (|faux_pixel_cnt)
-		faux_pixel_cnt <= faux_pixel_cnt - 1'b1;
-
-	if ((((skip_pixel && ~corepause_active) || (skip_pixel_pause && corepause_active)) && (faux_pixel_cnt == 0)) && !dejitter_timing) begin
-		freeze_clocks <= 1'b1;
-		faux_pixel_cnt <= {div_ppu_n - 1'b1, 1'b0} + 1'b1;
-	end
-
-
-	if (reset_nes | hold_reset) begin
-		bootvector_flag <= 1;
-		odd_or_even <= 1;
-	end else if (loading_savestate) begin
-		odd_or_even <= SS_TOP[0];
-	end else if (cpu_ce) begin
-		odd_or_even <= ~odd_or_even;
-		bootvector_flag <= 0;
-	end
-
-	// Realign if the system type changes.
-	last_sys_type <= sys_type;
-	if (last_sys_type != sys_type) begin
-		div_cpu <= 5'd1;
-		div_ppu <= 3'd1;
-		div_sys <= 0;
-		cpu_tick_count <= 0;
-	end
-
-	// pause
-	if (ppu_ce_pause) skip_pause_ce <= 0; // must skip the first CE after pause to sync back to correct ppu
-
-	if (reset_nes) begin
-		corepause_active       <= 0;
-		corepause_active_delay <= 0;
-	end else begin
-		if (corepause_active || (pausecore && div_cpu == 5'd1 && div_ppu == 3'd1 && div_sys == 0 && cpu_tick_count == 0 && ~freeze_clocks && is_in_vblank_paused && ~pause_cpu && cpu_Instrnew)) begin
-			div_cpu           <= 5'd1;
-			div_ppu           <= 3'd1;
-			div_sys           <= 0;
-			cpu_tick_count    <= 0;
-			corepause_active  <= 1;
-			div_ppu_pause     <= div_ppu + 3'd1;
+			// reset the ticker on the first ppu tick at or after a cpu tick.
+			if (cpu_ce)
+				ppu_tick <= 0;
+			else if (ppu_ce)
+				ppu_tick <= ppu_tick + 1'b1;
 		end
 
-		if (corepause_active) begin
+		// Add one extra PPU tick every 5 cpu cycles for PAL.
+		if (cpu_ce && (sys_type == 2'b01))
+			cpu_tick_count <= cpu_tick_count[2] ? 3'd0 : cpu_tick_count + 1'b1;
 
-			if (corepause_delay < 8'hFF) begin
-				corepause_delay <= corepause_delay + 1'd1;
-			end else begin
-				corepause_active_delay <= 1;
-			end
+		// SDRAM Clock
+		div_sys <= div_sys + 1'b1;
 
-			if (~freeze_clocks | ~(div_ppu_pause == (div_ppu_n - 1'b1))) begin
-				div_ppu_pause <= ppu_ce_pause ? 3'd1 : div_ppu_pause + 3'd1;
-				if (~pausecore && ppu_ce_pause && (cycle_paused == ppu_cycle) && (scanline_paused == scanline_ppu) && (evenframe == evenframe_paused)) begin
-					corepause_active       <= 0;
-					corepause_active_delay <= 0;
-					skip_pause_ce          <= 1;
-				end
-			end
+		// De-Jitter shenanigans
+		if (faux_pixel_cnt == 3)
+			freeze_clocks <= 1'b0;
+
+		if (|faux_pixel_cnt)
+			faux_pixel_cnt <= faux_pixel_cnt - 1'b1;
+
+		if ((((skip_pixel && ~corepause_active) || (skip_pixel_pause && corepause_active)) && (faux_pixel_cnt == 0)) && !dejitter_timing) begin
+			freeze_clocks <= 1'b1;
+			faux_pixel_cnt <= {div_ppu_n - 1'b1, 1'b0} + 1'b1;
+		end
+
+
+		if (reset_nes | hold_reset) begin
+			bootvector_flag <= 1;
+			odd_or_even <= 1;
+		end else if (loading_savestate) begin
+			odd_or_even <= SS_TOP[0];
+		end else if (cpu_ce) begin
+			odd_or_even <= ~odd_or_even;
+			bootvector_flag <= 0;
+		end
+
+		// Realign if the system type changes.
+		last_sys_type <= sys_type;
+		if (last_sys_type != sys_type) begin
+			div_cpu <= 5'd1;
+			div_ppu <= 3'd1;
+			div_sys <= 0;
+			cpu_tick_count <= 0;
+		end
+
+		// pause
+		if (ppu_ce_pause) skip_pause_ce <= 0; // must skip the first CE after pause to sync back to correct ppu
+
+		if (reset_nes) begin
+			corepause_active       <= 0;
+			corepause_active_delay <= 0;
 		end else begin
-			corepause_delay <= 8'd0;
+			if (corepause_active || (pausecore && div_cpu == 5'd1 && div_ppu == 3'd1 && div_sys == 0 && cpu_tick_count == 0 && ~freeze_clocks && is_in_vblank_paused && ~pause_cpu && cpu_Instrnew)) begin
+				div_cpu           <= 5'd1;
+				div_ppu           <= 3'd1;
+				div_sys           <= 0;
+				cpu_tick_count    <= 0;
+				corepause_active  <= 1;
+				div_ppu_pause     <= div_ppu + 3'd1;
+			end
+
+			if (corepause_active) begin
+
+				if (corepause_delay < 8'hFF) begin
+					corepause_delay <= corepause_delay + 1'd1;
+				end else begin
+					corepause_active_delay <= 1;
+				end
+
+				if (~freeze_clocks | ~(div_ppu_pause == (div_ppu_n - 1'b1))) begin
+					div_ppu_pause <= ppu_ce_pause ? 3'd1 : div_ppu_pause + 3'd1;
+					if (~pausecore && ppu_ce_pause && (cycle_paused == ppu_cycle) && (scanline_paused == scanline_ppu) && (evenframe == evenframe_paused)) begin
+						corepause_active       <= 0;
+						corepause_active_delay <= 0;
+						skip_pause_ce          <= 1;
+					end
+				end
+			end else begin
+				corepause_delay <= 8'd0;
+			end
 		end
 	end
 
@@ -551,10 +554,12 @@ wire joypad2_cs = apu_cs && addr[4:0] == 5'h17;
 reg [2:0] joy_out;
 reg [2:0] joy_latch;
 always @(posedge clk) begin
-	if (put_ce) joy_out <= joy_latch;
-	if (joypad1_cs && ~cpu_rnw) begin
-		joy_latch <= cpu_dout[2:0];
-		if (put_ce) joy_out <= cpu_dout[2:0];
+	if (speed_ce) begin
+		if (put_ce) joy_out <= joy_latch;
+		if (joypad1_cs && ~cpu_rnw) begin
+			joy_latch <= cpu_dout[2:0];
+			if (put_ce) joy_out <= cpu_dout[2:0];
+		end
 	end
 end
 
@@ -762,11 +767,13 @@ assign ppumem_dout  = chr_from_ppu;
 reg [7:0] open_bus_data;
 
 always @(posedge clk) begin
-	if (loading_savestate) begin
-		open_bus_data <= SS_TOP[8:1];
-	end else begin
-		if (!cpu_ce)
-			open_bus_data <= mw_int ? dbus : dma_data_bus;
+	if (speed_ce) begin
+		if (loading_savestate) begin
+			open_bus_data <= SS_TOP[8:1];
+		end else begin
+			if (!cpu_ce)
+				open_bus_data <= mw_int ? dbus : dma_data_bus;
+		end
 	end
 end
 
