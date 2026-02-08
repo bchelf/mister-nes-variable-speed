@@ -318,6 +318,7 @@ wire fds_fast = ~status[17];
 wire ext_audio = ~status[30];
 wire int_audio = ~status[31];
 wire [2:0] speed_sel = status[58:56];
+wire speed_full = (speed_sel == 3'd0);
 
 // Figure out file types
 reg type_bios, type_fds, type_gg, type_nsf, type_nes, type_palette, is_bios, downloading;
@@ -1211,6 +1212,7 @@ video video
 	.*,
 	.clk(clk),
 	.reset(reset_nes),
+	.speed_full(speed_full),
 	.cnt(nes_ce_video),
 	.sys_type(status[24:23]),
 	.nes_hsync(nes_hsync),

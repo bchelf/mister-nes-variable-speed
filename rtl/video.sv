@@ -15,6 +15,7 @@ module video
 	input  [1:0] reticle,
 	input  [1:0] sys_type,
 	input        pal_video,
+	input        speed_full,
 	input        nes_hblank,
 	input        nes_hsync,
 	input        nes_vsync,
@@ -44,10 +45,10 @@ assign VSync = vsync_shift[1];
 assign HBlank = hblank_shift[1];
 assign VBlank = vblank_shift[1];
 
-wire hsync_out = hsync_reg | nes_hsync;
-wire vsync_out = vsync_reg | nes_vsync;
-wire hblank_out = hblank_reg | nes_hblank;
-wire vblank_out = vblank_reg | nes_vblank;
+wire hsync_out = (speed_full ? hsync_reg : 1'b0) | nes_hsync;
+wire vsync_out = (speed_full ? vsync_reg : 1'b0) | nes_vsync;
+wire hblank_out = (speed_full ? hblank_reg : 1'b0) | nes_hblank;
+wire vblank_out = (speed_full ? vblank_reg : 1'b0) | nes_vblank;
 
 reg pix_ce;
 wire [5:0] color_ef = reticle[0] ? (reticle[1] ? 6'h21 : 6'h15) : color;
@@ -232,23 +233,30 @@ always @(posedge clk) begin
 				v <= 9'd511;
 		end
 
-		if (count_h == 5 && count_v == 0) begin // Resync the counters in case of skipped dots
-			h <= 6'd0;
-			v <= 0;
-		end
+		if (speed_full) begin
+			if (count_h == 5 && count_v == 0) begin // Resync the counters in case of skipped dots
+				h <= 6'd0;
+				v <= 0;
+			end
 
-		hsync_reg <= hsync_period;
-		hblank_reg <= hblank_period;
+			hsync_reg <= hsync_period;
+			hblank_reg <= hblank_period;
 
-		if (vc == vsync_start_sl && hsync_period)
-			vsync_reg <= 1;
-		if (vc == (vsync_start_sl + 2'd3) && hsync_period)
+			if (vc == vsync_start_sl && hsync_period)
+				vsync_reg <= 1;
+			if (vc == (vsync_start_sl + 2'd3) && hsync_period)
+				vsync_reg <= 0;
+
+			if (vc == vblank_start && hsync_period)
+				vblank_reg <= 1;
+			if (vc == vblank_end && hsync_period)
+				vblank_reg <= 0;
+		end else begin
+			hsync_reg <= 0;
+			hblank_reg <= 0;
 			vsync_reg <= 0;
-
-		if (vc == vblank_start && hsync_period)
-			vblank_reg <= 1;
-		if (vc == vblank_end && hsync_period)
 			vblank_reg <= 0;
+		end
 
 		ro <= ri;
 		go <= gi;

@@ -319,9 +319,6 @@ always @(posedge clk) begin
 		if (cpu_ce && (sys_type == 2'b01))
 			cpu_tick_count <= cpu_tick_count[2] ? 3'd0 : cpu_tick_count + 1'b1;
 
-		// SDRAM Clock
-		div_sys <= div_sys + 1'b1;
-
 		// De-Jitter shenanigans
 		if (faux_pixel_cnt == 3)
 			freeze_clocks <= 1'b0;
@@ -390,6 +387,11 @@ always @(posedge clk) begin
 				corepause_delay <= 8'd0;
 			end
 		end
+	end
+
+	// System/video phase should remain uniform regardless of speed
+	if (!speed_resync) begin
+		div_sys <= div_sys + 1'b1;
 	end
 
 end
