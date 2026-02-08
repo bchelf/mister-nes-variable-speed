@@ -124,7 +124,7 @@ wire [23:0] mem_data;
 spram #(.addr_width(6), .data_width(24), .mem_name("pal"), .mem_init_file("rtl/tao.mif")) pal_ram
 (
 	.clock(clk),
-	.address(load_color ? load_color_index : color_ef),
+	.address(load_color ? load_color_index : color_src),
 	.data(load_color_data),
 	.wren(load_color),
 	.q(mem_data)
@@ -134,16 +134,34 @@ reg [23:0] pixel;
 
 reg hbl, vbl;
 
+// Line buffer for slowed speeds
+reg [5:0] linebuf0[0:255];
+reg [5:0] linebuf1[0:255];
+reg [2:0] linebuf0_emph[0:255];
+reg [2:0] linebuf1_emph[0:255];
+reg       write_buf = 0;
+reg       read_buf = 0;
+reg       line_ready = 0;
+reg       completed_buf = 0;
+reg [8:0] count_h_d = 0;
+reg [8:0] count_v_d = 0;
+wire      new_pixel = (count_h != count_h_d) || (count_v != count_v_d);
+
+reg  [5:0] color_buf = 6'h0E;
+reg  [2:0] emph_buf = 0;
+wire [5:0] color_src = speed_full ? color_ef : color_buf;
+wire [2:0] emph_src  = speed_full ? emphasis : emph_buf;
+
 always @(posedge clk) begin
 	if(pix_ce) begin
 		case (palette)
-			0: pixel <= pal_kitrinx_lut[color_ef][23:0];
-			1: pixel <= pal_smooth_lut[color_ef][23:0];
-			2: pixel <= pal_wavebeam_lut[color_ef][23:0];
-			3: pixel <= pal_sonycxa_lut[color_ef][23:0];
-			4: pixel <= pal_pc10_lut[color_ef][23:0];
+			0: pixel <= pal_kitrinx_lut[color_src][23:0];
+			1: pixel <= pal_smooth_lut[color_src][23:0];
+			2: pixel <= pal_wavebeam_lut[color_src][23:0];
+			3: pixel <= pal_sonycxa_lut[color_src][23:0];
+			4: pixel <= pal_pc10_lut[color_src][23:0];
 			5: pixel <= mem_data;
-			default:pixel <= pal_kitrinx_lut[color_ef][23:0];
+			default:pixel <= pal_kitrinx_lut[color_src][23:0];
 		endcase
 	end
 end
@@ -210,11 +228,55 @@ wire [7:0] gi = pixel[15:8];
 wire [7:0] bi = pixel[7:0];
 reg [7:0] ro,go,bo;
 
+// Capture NES pixels into line buffers at NES cadence
+always @(posedge clk) begin
+	count_h_d <= count_h;
+	count_v_d <= count_v;
+
+	if (new_pixel) begin
+		if (!nes_hblank && !nes_vblank && (count_h < 9'd256)) begin
+			if (write_buf) begin
+				linebuf1[count_h[7:0]] <= color_ef;
+				linebuf1_emph[count_h[7:0]] <= emphasis;
+			end else begin
+				linebuf0[count_h[7:0]] <= color_ef;
+				linebuf0_emph[count_h[7:0]] <= emphasis;
+			end
+		end
+
+		if (count_h == 0) begin
+			completed_buf <= write_buf;
+			write_buf <= ~write_buf;
+			line_ready <= 1'b1;
+		end
+	end
+end
+
 
 always @(posedge clk) begin
 	reg [2:0] emph;
 
 	if (pix_ce) begin
+		if (!speed_full) begin
+			if (h == 0 && line_ready) begin
+				read_buf <= completed_buf;
+				line_ready <= 1'b0;
+			end
+
+			if (h < 256) begin
+				if (read_buf) begin
+					color_buf <= linebuf1[h[7:0]];
+					emph_buf <= linebuf1_emph[h[7:0]];
+				end else begin
+					color_buf <= linebuf0[h[7:0]];
+					emph_buf <= linebuf0_emph[h[7:0]];
+				end
+			end else begin
+				color_buf <= 6'h0E;
+				emph_buf <= 0;
+			end
+		end
+
 		hsync_shift <= {hsync_shift[0], hsync_out};
 		vsync_shift <= {vsync_shift[0], vsync_out};
 		hblank_shift <= {hblank_shift[0], hblank_out};
@@ -262,8 +324,8 @@ always @(posedge clk) begin
 		go <= gi;
 		bo <= bi;
 		emph <= 0;
-		if (~&color_ef[3:1]) begin // Only applies in draw range
-			emph <= emphasis;
+		if (~&color_src[3:1]) begin // Only applies in draw range
+			emph <= emph_src;
 		end
 
 		case(emph)
