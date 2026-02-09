@@ -46,19 +46,20 @@ assign VSync = vsync_shift[1];
 assign HBlank = hblank_shift[1];
 assign VBlank = vblank_shift[1];
 
-wire hsync_out = speed_full ? (hsync_reg | nes_hsync) : hsync_reg;
-wire vsync_out = speed_full ? (vsync_reg | nes_vsync) : vsync_reg;
-wire hblank_out = speed_full ? (hblank_reg | nes_hblank) : hblank_reg;
-wire vblank_out = speed_full ? (vblank_reg | nes_vblank) : vblank_reg;
+wire hsync_out = hsync_reg;
+wire vsync_out = vsync_reg;
+wire hblank_out = hblank_reg;
+wire vblank_out = vblank_reg;
 
 reg pix_ce;
 wire [5:0] color_ef = reticle[0] ? (reticle[1] ? 6'h21 : 6'h15) : color;
 
 always @(posedge clk) begin
-	pix_ce   <= ~cnt[1] & ~cnt[0];
+	pix_ce <= ~cnt[1] & ~cnt[0];
 end
 
 assign ce_pix = pix_ce;
+
 // Kitrinx 34 palette by Kitrinx
 wire [23:0] pal_kitrinx_lut[64] = '{
 	'h666666, 'h01247B, 'h1B1489, 'h39087C, 'h520257, 'h5C0725, 'h571300, 'h472300,
@@ -119,6 +120,38 @@ wire [23:0] pal_sonycxa_lut[64] = '{
 	'hE9DE86, 'hC7E992, 'hA8EEB0, 'h95ECD9, 'h91E4FE, 'hACACAC, 'h000000, 'h000000
 };
 
+localparam int FB_SIZE = 256 * 240;
+
+reg       write_fb = 0;
+reg       read_fb = 0;
+reg       newest_fb = 0;
+reg       src_frame_toggle = 0;
+reg       src_frame_seen = 0;
+reg [1:0] fb_valid = 0;
+reg       frame_write_seen = 0;
+reg       capture_armed = 1'b1;
+
+reg       nes_vblank_d = 0;
+reg [8:0] count_h_d = 0;
+reg [8:0] count_v_d = 0;
+wire      new_pixel = (count_h != count_h_d) || (count_v != count_v_d);
+wire [15:0] src_addr = {count_v[7:0], count_h[7:0]};
+reg  [8:0] h, v;
+wire [8:0] hc = h;
+wire [8:0] vc = v;
+wire [15:0] dst_addr = {v[7:0], h[7:0]};
+
+wire capture_pixel = capture_armed && new_pixel && !nes_vblank && (count_h < 9'd256) && (count_v < 9'd240);
+wire fb0_wren = capture_pixel && !write_fb;
+wire fb1_wren = capture_pixel && write_fb;
+wire [8:0] fb0_q;
+wire [8:0] fb1_q;
+
+reg [8:0] fb_pix = 9'h00E;
+wire [5:0] color_src = speed_full ? color_ef : fb_pix[5:0];
+wire [2:0] emph_src  = speed_full ? emphasis : fb_pix[8:6];
+reg  [5:0] color_src_q = 6'h0E;
+reg  [2:0] emph_src_q = 0;
 
 wire [23:0] mem_data;
 
@@ -131,36 +164,41 @@ spram #(.addr_width(6), .data_width(24), .mem_name("pal"), .mem_init_file("rtl/t
 	.q(mem_data)
 );
 
+dpram #(.widthad_a(16), .width_a(9)) framebuf0_ram
+(
+	.clock_a   (clk),
+	.address_a (src_addr),
+	.wren_a    (fb0_wren),
+	.data_a    ({emphasis, color_ef}),
+	.byteena_a (1'b1),
+	.q_a       (),
+
+	.clock_b   (clk),
+	.address_b (dst_addr),
+	.wren_b    (1'b0),
+	.data_b    (9'd0),
+	.byteena_b (1'b1),
+	.q_b       (fb0_q)
+);
+
+dpram #(.widthad_a(16), .width_a(9)) framebuf1_ram
+(
+	.clock_a   (clk),
+	.address_a (src_addr),
+	.wren_a    (fb1_wren),
+	.data_a    ({emphasis, color_ef}),
+	.byteena_a (1'b1),
+	.q_a       (),
+
+	.clock_b   (clk),
+	.address_b (dst_addr),
+	.wren_b    (1'b0),
+	.data_b    (9'd0),
+	.byteena_b (1'b1),
+	.q_b       (fb1_q)
+);
+
 reg [23:0] pixel;
-
-reg hbl, vbl;
-
-// Line buffer for slowed speeds
-reg [5:0] linebuf0[0:255];
-reg [5:0] linebuf1[0:255];
-reg [2:0] linebuf0_emph[0:255];
-reg [2:0] linebuf1_emph[0:255];
-reg       write_buf = 0;
-reg       read_buf = 0;
-reg       completed_buf = 0;
-reg       line_toggle = 0;
-reg       line_seen = 0;
-reg       write_had_pixel = 0;
-reg       nes_hblank_d = 0;
-reg [8:0] count_h_d = 0;
-reg [8:0] count_v_d = 0;
-wire      new_pixel = (count_h != count_h_d) || (count_v != count_v_d);
-reg       pending_line = 0;
-reg       pending_buf = 0;
-reg  [7:0] v_accum = 0;
-wire [8:0] v_accum_next = v_accum + speed_pct;
-
-reg  [5:0] color_buf = 6'h0E;
-reg  [2:0] emph_buf = 0;
-wire [5:0] color_src = speed_full ? color_ef : color_buf;
-wire [2:0] emph_src  = speed_full ? emphasis : emph_buf;
-reg  [5:0] color_src_q = 6'h0E;
-reg  [2:0] emph_src_q = 0;
 
 always @(posedge clk) begin
 	if(pix_ce) begin
@@ -178,14 +216,8 @@ always @(posedge clk) begin
 	end
 end
 
-wire disengaged = reset || hold_reset;
-
-reg  hblank, vblank;
-reg  [8:0] h, v;
-wire [8:0] hc = (disengaged || !speed_full) ? h : count_h;
-wire [8:0] vc = (disengaged || !speed_full) ? v : count_v;
-wire [8:0] vblank_start, vblank_end, hblank_start, hblank_end, hsync_start, hsync_end;
-wire [8:0] vblank_start_sl, vblank_end_sl, vsync_start_sl;
+wire [8:0] vblank_start, vblank_end, vsync_start_sl;
+wire [8:0] vblank_start_sl, vblank_end_sl;
 wire hblank_period;
 
 always_comb begin
@@ -240,83 +272,79 @@ wire [7:0] gi = pixel[15:8];
 wire [7:0] bi = pixel[7:0];
 reg [7:0] ro,go,bo;
 
-// Capture NES pixels into line buffers at NES cadence
+// Capture source frames continuously, independent of output speed.
 always @(posedge clk) begin
-	count_h_d <= count_h;
-	count_v_d <= count_v;
-	nes_hblank_d <= nes_hblank;
+	if (reset) begin
+		write_fb <= 0;
+		newest_fb <= 0;
+		src_frame_toggle <= 0;
+		fb_valid <= 0;
+		frame_write_seen <= 0;
+		capture_armed <= 1'b1;
+		nes_vblank_d <= 0;
+	end else begin
+		count_h_d <= count_h;
+		count_v_d <= count_v;
+		nes_vblank_d <= nes_vblank;
 
-	if (new_pixel) begin
-		if (!nes_vblank && (count_h < 9'd256)) begin
-			if (write_buf) begin
-				linebuf1[count_h[7:0]] <= color_ef;
-				linebuf1_emph[count_h[7:0]] <= emphasis;
-			end else begin
-				linebuf0[count_h[7:0]] <= color_ef;
-				linebuf0_emph[count_h[7:0]] <= emphasis;
-			end
-			write_had_pixel <= 1'b1;
+		if (capture_pixel) begin
+			frame_write_seen <= 1'b1;
+		end
+
+		// Commit completed source frame on vblank rising edge.
+		if (!nes_vblank_d && nes_vblank && frame_write_seen) begin
+			newest_fb <= write_fb;
+			fb_valid[write_fb] <= 1'b1;
+			src_frame_toggle <= ~src_frame_toggle;
+			frame_write_seen <= 1'b0;
+			capture_armed <= 1'b0;
+		end
+
+		// Don't start writing a new frame until the previous completed one is consumed.
+		if (!capture_armed && (src_frame_seen == src_frame_toggle)) begin
+			write_fb <= ~read_fb;
+			capture_armed <= 1'b1;
 		end
 	end
-
-	// Flip buffer on hblank rising edge after we've written at least one pixel this line.
-	if (!nes_hblank_d && nes_hblank && write_had_pixel) begin
-		completed_buf <= write_buf;
-		write_buf <= ~write_buf;
-		line_toggle <= ~line_toggle;
-		write_had_pixel <= 1'b0;
-	end
-
 end
-
 
 always @(posedge clk) begin
 	reg [2:0] emph;
 
-	if (pix_ce) begin
+	if (reset) begin
+		hold_reset <= 1'b1;
+		hsync_reg <= 1'b0;
+		vsync_reg <= 1'b0;
+		hblank_reg <= 1'b0;
+		vblank_reg <= 1'b0;
+		hsync_shift <= 2'b00;
+		vsync_shift <= 2'b00;
+		hblank_shift <= 2'b00;
+		vblank_shift <= 2'b00;
+		h <= 9'd0;
+		v <= 9'd0;
+		read_fb <= 0;
+		src_frame_seen <= 0;
+		fb_pix <= 9'h00E;
+		ro <= 8'h00;
+		go <= 8'h00;
+		bo <= 8'h00;
+	end else if (pix_ce) begin
 		if (!speed_full) begin
-			if (h == 0 && v == 0) begin
-				line_seen <= line_toggle;
-				pending_line <= 0;
-				v_accum <= 0;
+			// Latch newest complete source frame at output frame boundary.
+			if (h == 0 && v == 0 && (src_frame_seen != src_frame_toggle)) begin
+				read_fb <= newest_fb;
+				src_frame_seen <= src_frame_toggle;
 			end
 
-			if (h == 0) begin
-				// Latch newly completed line (if any)
-				if (line_seen != line_toggle) begin
-					line_seen <= line_toggle;
-					pending_line <= 1'b1;
-					pending_buf <= completed_buf;
-				end
-
-				// Vertical rate conversion: advance when accumulator wraps.
-				v_accum <= v_accum_next[7:0];
-				if (v_accum_next >= 9'd100) begin
-					v_accum <= v_accum_next - 9'd100;
-					if (pending_line) begin
-						read_buf <= pending_buf;
-						pending_line <= 1'b0;
-					end
-				end
-			end
-
-			if (h < 256) begin
-				if (read_buf) begin
-					color_buf <= linebuf1[h[7:0]];
-					emph_buf <= linebuf1_emph[h[7:0]];
+			if ((h < 9'd256) && (v < 9'd240) && fb_valid[read_fb]) begin
+				if (read_fb) begin
+					fb_pix <= fb1_q;
 				end else begin
-					color_buf <= linebuf0[h[7:0]];
-					emph_buf <= linebuf0_emph[h[7:0]];
+					fb_pix <= fb0_q;
 				end
 			end else begin
-				color_buf <= 6'h0E;
-				emph_buf <= 0;
-			end
-		end
-		else begin
-			if (h == 0 && (line_seen != line_toggle)) begin
-				read_buf <= completed_buf;
-				line_seen <= line_toggle;
+				fb_pix <= 9'h00E;
 			end
 		end
 
@@ -327,8 +355,6 @@ always @(posedge clk) begin
 
 		if (h == 0 && v == 0)
 			hold_reset <= 1'b0;
-		else if (reset)
-			hold_reset <= 1'b1;
 
 		h <= h + 1'd1;
 		if (h >= 340) begin
@@ -409,5 +435,7 @@ end
 assign R = ro;
 assign G = go;
 assign B = bo;
+
+wire _unused_ok = &{1'b0, pal_video, speed_pct, nes_hblank, nes_hsync, nes_vsync};
 
 endmodule
