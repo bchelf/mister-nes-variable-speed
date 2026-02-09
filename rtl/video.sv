@@ -150,7 +150,8 @@ reg [8:0] count_h_d = 0;
 reg [8:0] count_v_d = 0;
 wire      new_pixel = (count_h != count_h_d) || (count_v != count_v_d);
 reg       nes_vblank_d = 0;
-reg       vblank_arm = 0;
+reg       vblank_toggle = 0;
+reg       vblank_seen = 0;
 
 reg  [5:0] color_buf = 6'h0E;
 reg  [2:0] emph_buf = 0;
@@ -265,9 +266,9 @@ always @(posedge clk) begin
 		write_had_pixel <= 1'b0;
 	end
 
-	// Arm a frame align on vblank rising edge.
+	// Toggle on vblank rising edge.
 	if (!nes_vblank_d && nes_vblank)
-		vblank_arm <= 1'b1;
+		vblank_toggle <= ~vblank_toggle;
 end
 
 
@@ -275,11 +276,11 @@ always @(posedge clk) begin
 	reg [2:0] emph;
 
 	if (pix_ce) begin
-		if (!speed_full && vblank_arm) begin
+		if (!speed_full && (vblank_seen != vblank_toggle)) begin
 			h <= 0;
 			v <= 0;
 			line_seen <= line_toggle;
-			vblank_arm <= 1'b0;
+			vblank_seen <= vblank_toggle;
 		end
 
 		if (!speed_full) begin
