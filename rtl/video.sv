@@ -131,6 +131,8 @@ reg [1:0] fb_valid = 0;
 reg       frame_write_seen = 0;
 reg       capture_armed = 1'b1;
 reg       capture_pending = 1'b0;
+reg  [7:0] present_accum = 0;
+wire [8:0] present_next = present_accum + speed_pct;
 
 reg       nes_vblank_d = 0;
 reg [8:0] count_h_d = 0;
@@ -334,16 +336,24 @@ always @(posedge clk) begin
 		v <= 9'd0;
 		read_fb <= 0;
 		src_frame_seen <= 0;
+		present_accum <= 0;
 		fb_pix <= 9'h00E;
 		ro <= 8'h00;
 		go <= 8'h00;
 		bo <= 8'h00;
 	end else if (pix_ce) begin
 		if (!speed_full) begin
-			// Latch newest complete source frame at output frame boundary.
-			if (h == 0 && v == 0 && (src_frame_seen != src_frame_toggle)) begin
-				read_fb <= newest_fb;
-				src_frame_seen <= src_frame_toggle;
+			// Present source frames on a deterministic fractional schedule.
+			if (h == 0 && v == 0) begin
+				if (present_next >= 9'd100) begin
+					present_accum <= present_next - 9'd100;
+					if (src_frame_seen != src_frame_toggle) begin
+						read_fb <= newest_fb;
+						src_frame_seen <= src_frame_toggle;
+					end
+				end else begin
+					present_accum <= present_next[7:0];
+				end
 			end
 
 			if ((h < 9'd256) && (v < 9'd240) && fb_valid[read_fb]) begin
@@ -355,6 +365,8 @@ always @(posedge clk) begin
 			end else begin
 				fb_pix <= 9'h00E;
 			end
+		end else begin
+			present_accum <= 0;
 		end
 
 		hsync_shift <= {hsync_shift[0], hsync_out};
