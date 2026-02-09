@@ -150,9 +150,6 @@ reg       nes_hblank_d = 0;
 reg [8:0] count_h_d = 0;
 reg [8:0] count_v_d = 0;
 wire      new_pixel = (count_h != count_h_d) || (count_v != count_v_d);
-reg       nes_vblank_d = 0;
-reg       vblank_toggle = 0;
-reg       vblank_seen = 0;
 reg       pending_line = 0;
 reg       pending_buf = 0;
 reg  [7:0] v_accum = 0;
@@ -248,7 +245,6 @@ always @(posedge clk) begin
 	count_h_d <= count_h;
 	count_v_d <= count_v;
 	nes_hblank_d <= nes_hblank;
-	nes_vblank_d <= nes_vblank;
 
 	if (new_pixel) begin
 		if (!nes_vblank && (count_h < 9'd256)) begin
@@ -271,9 +267,6 @@ always @(posedge clk) begin
 		write_had_pixel <= 1'b0;
 	end
 
-	// Toggle on vblank rising edge.
-	if (!nes_vblank_d && nes_vblank)
-		vblank_toggle <= ~vblank_toggle;
 end
 
 
@@ -281,16 +274,13 @@ always @(posedge clk) begin
 	reg [2:0] emph;
 
 	if (pix_ce) begin
-		if (!speed_full && (vblank_seen != vblank_toggle)) begin
-			h <= 0;
-			v <= 0;
-			line_seen <= line_toggle;
-			pending_line <= 0;
-			v_accum <= 0;
-			vblank_seen <= vblank_toggle;
-		end
-
 		if (!speed_full) begin
+			if (h == 0 && v == 0) begin
+				line_seen <= line_toggle;
+				pending_line <= 0;
+				v_accum <= 0;
+			end
+
 			if (h == 0) begin
 				// Latch newly completed line (if any)
 				if (line_seen != line_toggle) begin
