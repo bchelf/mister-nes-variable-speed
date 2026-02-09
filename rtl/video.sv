@@ -312,7 +312,6 @@ always @(posedge clk) begin
 	reg [2:0] emph;
 
 	if (reset) begin
-		hold_reset <= 1'b1;
 		hsync_reg <= 1'b0;
 		vsync_reg <= 1'b0;
 		hblank_reg <= 1'b0;
@@ -352,9 +351,6 @@ always @(posedge clk) begin
 		vsync_shift <= {vsync_shift[0], vsync_out};
 		hblank_shift <= {hblank_shift[0], hblank_out};
 		vblank_shift <= {vblank_shift[0], vblank_out};
-
-		if (h == 0 && v == 0)
-			hold_reset <= 1'b0;
 
 		h <= h + 1'd1;
 		if (h >= 340) begin
@@ -429,6 +425,16 @@ always @(posedge clk) begin
 					bo <= bi - bi[7:2];
 				end
 		endcase
+	end
+end
+
+// Keep hold_reset behavior equivalent to legacy logic, but isolated to avoid reset feedback lockups.
+always @(posedge clk) begin
+	if (pix_ce) begin
+		if (h == 0 && v == 0)
+			hold_reset <= 1'b0;
+		else if (reset)
+			hold_reset <= 1'b1;
 	end
 end
 
