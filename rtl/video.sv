@@ -45,10 +45,10 @@ assign VSync = vsync_shift[1];
 assign HBlank = hblank_shift[1];
 assign VBlank = vblank_shift[1];
 
-wire hsync_out = (speed_full ? hsync_reg : 1'b0) | nes_hsync;
-wire vsync_out = (speed_full ? vsync_reg : 1'b0) | nes_vsync;
-wire hblank_out = (speed_full ? hblank_reg : 1'b0) | nes_hblank;
-wire vblank_out = (speed_full ? vblank_reg : 1'b0) | nes_vblank;
+wire hsync_out = speed_full ? (hsync_reg | nes_hsync) : hsync_reg;
+wire vsync_out = speed_full ? (vsync_reg | nes_vsync) : vsync_reg;
+wire hblank_out = speed_full ? (hblank_reg | nes_hblank) : hblank_reg;
+wire vblank_out = speed_full ? (vblank_reg | nes_vblank) : vblank_reg;
 
 reg pix_ce;
 wire [5:0] color_ef = reticle[0] ? (reticle[1] ? 6'h21 : 6'h15) : color;
@@ -124,7 +124,7 @@ wire [23:0] mem_data;
 spram #(.addr_width(6), .data_width(24), .mem_name("pal"), .mem_init_file("rtl/tao.mif")) pal_ram
 (
 	.clock(clk),
-	.address(load_color ? load_color_index : color_src),
+	.address(load_color ? load_color_index : color_src_q),
 	.data(load_color_data),
 	.wren(load_color),
 	.q(mem_data)
@@ -144,6 +144,8 @@ reg       read_buf = 0;
 reg       completed_buf = 0;
 reg       line_toggle = 0;
 reg       line_seen = 0;
+reg       write_had_pixel = 0;
+reg       nes_hblank_d = 0;
 reg [8:0] count_h_d = 0;
 reg [8:0] count_v_d = 0;
 wire      new_pixel = (count_h != count_h_d) || (count_v != count_v_d);
@@ -152,17 +154,21 @@ reg  [5:0] color_buf = 6'h0E;
 reg  [2:0] emph_buf = 0;
 wire [5:0] color_src = speed_full ? color_ef : color_buf;
 wire [2:0] emph_src  = speed_full ? emphasis : emph_buf;
+reg  [5:0] color_src_q = 6'h0E;
+reg  [2:0] emph_src_q = 0;
 
 always @(posedge clk) begin
 	if(pix_ce) begin
+		color_src_q <= color_src;
+		emph_src_q <= emph_src;
 		case (palette)
-			0: pixel <= pal_kitrinx_lut[color_src][23:0];
-			1: pixel <= pal_smooth_lut[color_src][23:0];
-			2: pixel <= pal_wavebeam_lut[color_src][23:0];
-			3: pixel <= pal_sonycxa_lut[color_src][23:0];
-			4: pixel <= pal_pc10_lut[color_src][23:0];
+			0: pixel <= pal_kitrinx_lut[color_src_q][23:0];
+			1: pixel <= pal_smooth_lut[color_src_q][23:0];
+			2: pixel <= pal_wavebeam_lut[color_src_q][23:0];
+			3: pixel <= pal_sonycxa_lut[color_src_q][23:0];
+			4: pixel <= pal_pc10_lut[color_src_q][23:0];
 			5: pixel <= mem_data;
-			default:pixel <= pal_kitrinx_lut[color_src][23:0];
+			default:pixel <= pal_kitrinx_lut[color_src_q][23:0];
 		endcase
 	end
 end
@@ -171,8 +177,8 @@ wire disengaged = reset || hold_reset;
 
 reg  hblank, vblank;
 reg  [8:0] h, v;
-wire [8:0] hc = disengaged ? h : count_h;
-wire [8:0] vc = disengaged ? v : count_v;
+wire [8:0] hc = (disengaged || !speed_full) ? h : count_h;
+wire [8:0] vc = (disengaged || !speed_full) ? v : count_v;
 wire [8:0] vblank_start, vblank_end, hblank_start, hblank_end, hsync_start, hsync_end;
 wire [8:0] vblank_start_sl, vblank_end_sl, vsync_start_sl;
 wire hblank_period;
@@ -233,9 +239,10 @@ reg [7:0] ro,go,bo;
 always @(posedge clk) begin
 	count_h_d <= count_h;
 	count_v_d <= count_v;
+	nes_hblank_d <= nes_hblank;
 
 	if (new_pixel) begin
-		if (!nes_hblank && !nes_vblank && (count_h < 9'd256)) begin
+		if (!nes_vblank && (count_h < 9'd256)) begin
 			if (write_buf) begin
 				linebuf1[count_h[7:0]] <= color_ef;
 				linebuf1_emph[count_h[7:0]] <= emphasis;
@@ -243,15 +250,18 @@ always @(posedge clk) begin
 				linebuf0[count_h[7:0]] <= color_ef;
 				linebuf0_emph[count_h[7:0]] <= emphasis;
 			end
-		end
-
-			if (count_h == 0) begin
-				completed_buf <= write_buf;
-				write_buf <= ~write_buf;
-				line_toggle <= ~line_toggle;
-			end
+			write_had_pixel <= 1'b1;
 		end
 	end
+
+	// Flip buffer on hblank rising edge after we've written at least one pixel this line.
+	if (!nes_hblank_d && nes_hblank && write_had_pixel) begin
+		completed_buf <= write_buf;
+		write_buf <= ~write_buf;
+		line_toggle <= ~line_toggle;
+		write_had_pixel <= 1'b0;
+	end
+end
 
 
 always @(posedge clk) begin
@@ -301,32 +311,27 @@ always @(posedge clk) begin
 				h <= 6'd0;
 				v <= 0;
 			end
-
-			hsync_reg <= hsync_period;
-			hblank_reg <= hblank_period;
-
-			if (vc == vsync_start_sl && hsync_period)
-				vsync_reg <= 1;
-			if (vc == (vsync_start_sl + 2'd3) && hsync_period)
-				vsync_reg <= 0;
-
-			if (vc == vblank_start && hsync_period)
-				vblank_reg <= 1;
-			if (vc == vblank_end && hsync_period)
-				vblank_reg <= 0;
-		end else begin
-			hsync_reg <= 0;
-			hblank_reg <= 0;
-			vsync_reg <= 0;
-			vblank_reg <= 0;
 		end
+
+		hsync_reg <= hsync_period;
+		hblank_reg <= hblank_period;
+
+		if (vc == vsync_start_sl && hsync_period)
+			vsync_reg <= 1;
+		if (vc == (vsync_start_sl + 2'd3) && hsync_period)
+			vsync_reg <= 0;
+
+		if (vc == vblank_start && hsync_period)
+			vblank_reg <= 1;
+		if (vc == vblank_end && hsync_period)
+			vblank_reg <= 0;
 
 		ro <= ri;
 		go <= gi;
 		bo <= bi;
 		emph <= 0;
-		if (~&color_src[3:1]) begin // Only applies in draw range
-			emph <= emph_src;
+		if (~&color_src_q[3:1]) begin // Only applies in draw range
+			emph <= emph_src_q;
 		end
 
 		case(emph)
