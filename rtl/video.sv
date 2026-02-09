@@ -130,6 +130,7 @@ reg       src_frame_seen = 0;
 reg [1:0] fb_valid = 0;
 reg       frame_write_seen = 0;
 reg       capture_armed = 1'b1;
+reg       capture_pending = 1'b0;
 
 reg       nes_vblank_d = 0;
 reg [8:0] count_h_d = 0;
@@ -280,7 +281,8 @@ always @(posedge clk) begin
 		src_frame_toggle <= 0;
 		fb_valid <= 0;
 		frame_write_seen <= 0;
-		capture_armed <= 1'b1;
+		capture_armed <= 1'b0;
+		capture_pending <= 1'b1;
 		nes_vblank_d <= 0;
 	end else begin
 		count_h_d <= count_h;
@@ -298,12 +300,20 @@ always @(posedge clk) begin
 			src_frame_toggle <= ~src_frame_toggle;
 			frame_write_seen <= 1'b0;
 			capture_armed <= 1'b0;
+			capture_pending <= 1'b0;
 		end
 
-		// Don't start writing a new frame until the previous completed one is consumed.
+		// Wait for display consumption, then arm capture at next source frame boundary.
 		if (!capture_armed && (src_frame_seen == src_frame_toggle)) begin
+			capture_pending <= 1'b1;
+		end
+
+		// Arm only at source vblank edge so a newly captured frame always starts at line 0.
+		if (!nes_vblank_d && nes_vblank && capture_pending) begin
 			write_fb <= ~read_fb;
 			capture_armed <= 1'b1;
+			capture_pending <= 1'b0;
+			frame_write_seen <= 1'b0;
 		end
 	end
 end
