@@ -1213,6 +1213,7 @@ video video
 	.clk(clk),
 	.reset(reset_nes),
 	.speed_full(speed_full),
+	.speed_pct(speed_pct),
 	.cnt(nes_ce_video),
 	.sys_type(status[24:23]),
 	.nes_hsync(nes_hsync),

@@ -16,6 +16,7 @@ module video
 	input  [1:0] sys_type,
 	input        pal_video,
 	input        speed_full,
+	input  [6:0] speed_pct,
 	input        nes_hblank,
 	input        nes_hsync,
 	input        nes_vsync,
@@ -152,6 +153,10 @@ wire      new_pixel = (count_h != count_h_d) || (count_v != count_v_d);
 reg       nes_vblank_d = 0;
 reg       vblank_toggle = 0;
 reg       vblank_seen = 0;
+reg       pending_line = 0;
+reg       pending_buf = 0;
+reg  [7:0] v_accum = 0;
+wire [8:0] v_accum_next = v_accum + speed_pct;
 
 reg  [5:0] color_buf = 6'h0E;
 reg  [2:0] emph_buf = 0;
@@ -280,13 +285,29 @@ always @(posedge clk) begin
 			h <= 0;
 			v <= 0;
 			line_seen <= line_toggle;
+			pending_line <= 0;
+			v_accum <= 0;
 			vblank_seen <= vblank_toggle;
 		end
 
 		if (!speed_full) begin
-			if (h == 0 && (line_seen != line_toggle)) begin
-				read_buf <= completed_buf;
-				line_seen <= line_toggle;
+			if (h == 0) begin
+				// Latch newly completed line (if any)
+				if (line_seen != line_toggle) begin
+					line_seen <= line_toggle;
+					pending_line <= 1'b1;
+					pending_buf <= completed_buf;
+				end
+
+				// Vertical rate conversion: advance when accumulator wraps.
+				v_accum <= v_accum_next[7:0];
+				if (v_accum_next >= 9'd100) begin
+					v_accum <= v_accum_next - 9'd100;
+					if (pending_line) begin
+						read_buf <= pending_buf;
+						pending_line <= 1'b0;
+					end
+				end
 			end
 
 			if (h < 256) begin
@@ -300,6 +321,12 @@ always @(posedge clk) begin
 			end else begin
 				color_buf <= 6'h0E;
 				emph_buf <= 0;
+			end
+		end
+		else begin
+			if (h == 0 && (line_seen != line_toggle)) begin
+				read_buf <= completed_buf;
+				line_seen <= line_toggle;
 			end
 		end
 
