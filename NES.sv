@@ -256,6 +256,7 @@ parameter CONF_STR = {
 	"P2,Input Options;",
 	"P2-;",
 	"P2O9,Swap Joysticks,No,Yes;",
+	"P2O[55],Disallow L+R,Off,On;",
 	"P2OA,Multitap,Disabled,Enabled;",
 	"P2oJK,SNAC,Off,Controllers,Zapper,3D Glasses;",
 	"P2o02,Peripheral,None,Zapper(Mouse),Zapper(Joy1),Zapper(Joy2),Vaus,Vaus(A-Trigger),Powerpad,Family Trainer;",
@@ -570,10 +571,16 @@ assign famtr[1] = (~joypad_out[2] & powerpad[2]) | (~joypad_out[1] & powerpad[6]
 assign famtr[2] = (~joypad_out[2] & powerpad[1]) | (~joypad_out[1] & powerpad[5]) | (~joypad_out[0] & powerpad[9] );
 assign famtr[3] = (~joypad_out[2] & powerpad[0]) | (~joypad_out[1] & powerpad[4]) | (~joypad_out[0] & powerpad[8] );
 
-wire [7:0] nes_joy_A = { joyA[0], joyA[1], joyA[2], joyA[3], joyA[7], joyA[6], joyA[5], ~paddle_atr & joyA[4] };
-wire [7:0] nes_joy_B = { joyB[0], joyB[1], joyB[2], joyB[3], joyB[7], joyB[6], joyB[5], ~paddle_atr & joyB[4] };
-wire [7:0] nes_joy_C = { joyC[0], joyC[1], joyC[2], joyC[3], joyC[7], joyC[6], joyC[5], ~paddle_atr & joyC[4] };
-wire [7:0] nes_joy_D = { joyD[0], joyD[1], joyD[2], joyD[3], joyD[7], joyD[6], joyD[5], ~paddle_atr & joyD[4] };
+wire       neutral_lr = status[55];
+wire [7:0] nes_joy_A_raw = { joyA[0], joyA[1], joyA[2], joyA[3], joyA[7], joyA[6], joyA[5], ~paddle_atr & joyA[4] };
+wire [7:0] nes_joy_B_raw = { joyB[0], joyB[1], joyB[2], joyB[3], joyB[7], joyB[6], joyB[5], ~paddle_atr & joyB[4] };
+wire [7:0] nes_joy_C_raw = { joyC[0], joyC[1], joyC[2], joyC[3], joyC[7], joyC[6], joyC[5], ~paddle_atr & joyC[4] };
+wire [7:0] nes_joy_D_raw = { joyD[0], joyD[1], joyD[2], joyD[3], joyD[7], joyD[6], joyD[5], ~paddle_atr & joyD[4] };
+
+wire [7:0] nes_joy_A = (neutral_lr && nes_joy_A_raw[7] && nes_joy_A_raw[6]) ? {2'b00, nes_joy_A_raw[5:0]} : nes_joy_A_raw;
+wire [7:0] nes_joy_B = (neutral_lr && nes_joy_B_raw[7] && nes_joy_B_raw[6]) ? {2'b00, nes_joy_B_raw[5:0]} : nes_joy_B_raw;
+wire [7:0] nes_joy_C = (neutral_lr && nes_joy_C_raw[7] && nes_joy_C_raw[6]) ? {2'b00, nes_joy_C_raw[5:0]} : nes_joy_C_raw;
+wire [7:0] nes_joy_D = (neutral_lr && nes_joy_D_raw[7] && nes_joy_D_raw[6]) ? {2'b00, nes_joy_D_raw[5:0]} : nes_joy_D_raw;
 
 wire mic_button = joyA[9] | joyB[9];
 wire fds_btn = joyA[8] | joyB[8];
